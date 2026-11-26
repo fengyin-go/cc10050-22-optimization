@@ -28,6 +28,8 @@
       </span>
     </p>
 
+    <CurrencyReplacementPanel v-if="meta.key === 'currency_conv'" />
+
     <form class="filter-bar" @submit.prevent="reload">
       <label v-for="field in filterFields" :key="field" class="filter-item">
         <span>{{ field }}</span>
@@ -96,6 +98,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
+import CurrencyReplacementPanel from '@/components/CurrencyReplacementPanel.vue'
 import {
   createEntry,
   downloadEntries,

@@ -107,6 +107,111 @@ class ChangeHistoryService(BaseModuleService):
             "ratio": f"{ratio:.2%}",
         }
 
+    # ---- 业务扩展：消费货币换算器的换算变更 ----
+
+    def consume_currency_changes(self, pair: str | None = None) -> dict[str, Any]:
+        """消费各币对的换算变更，把快照关联到相关价格事件并重算实际换算金额。
+
+        换算变更记录由货币换算器持有，这里只做流水侧的关联与复核范围登记；
+        每条变更只重算一次，重复消费拿到同一个重算凭据。
+        """
+        from app.services import service_for
+
+        currency = service_for("currency_conv")
+        if currency is None:
+            return {"ok": False, "message": "货币换算器服务不可用"}
+        changes = currency.conversion_changes(pair).get("items", [])
+        if not changes:
+            return {"ok": False, "message": "没有可消费的换算变更记录", "events": []}
+        linked: list[dict[str, Any]] = []
+        scopes: set[str] = set()
+        for change in changes:
+            consumption = currency._recompute_pair_events(change)
+            scopes |= set(consumption["review_scope"])
+            linked.extend(consumption["events"])
+        return {
+            "ok": True,
+            "message": "换算变更已消费，变价流水完成重算",
+            "pair": pair or "全部币对",
+            "changes": len(changes),
+            "events": linked,
+            "event_count": len(linked),
+            "actual_total": round(
+                sum(float(event.get("换算后金额") or 0) for event in linked), 2),
+            "review_scope": sorted(scopes),
+        }
+
+    def currency_price_events(self, pair: str | None = None) -> dict[str, Any]:
+        """按币对列出已关联换算快照的价格事件，旧价与前后依据都可查。"""
+        rows = [
+            row for row in store.rows(self.MODULE)
+            if row.get("币对") and (pair is None or row.get("币对") == pair)
+        ]
+        rows.sort(key=lambda row: str(row.get("发现时间", "")), reverse=True)
+        events = [
+            {
+                "id": row.get("id"),
+                "商品标识": row.get("商品标识", ""),
+                "币对": row.get("币对", ""),
+                "旧价格": row.get("旧价格"),
+                "新价格": row.get("新价格"),
+                "变化幅度": row.get("变化幅度", ""),
+                "原币金额": row.get("原币金额"),
+                "换算前金额": row.get("换算前金额"),
+                "换算后金额": row.get("换算后金额"),
+                "换算前汇率": row.get("换算前汇率"),
+                "换算后汇率": row.get("换算后汇率"),
+                "汇率版本": row.get("汇率版本", ""),
+                "换算快照": row.get("换算快照"),
+                "换算快照日期": row.get("换算快照日期", ""),
+                "换算变更记录": row.get("换算变更记录"),
+                "换算申请": row.get("换算申请", ""),
+                "换算依据": row.get("换算依据", {}),
+                "复核范围": row.get("复核范围", ""),
+                "旧价仍可查": True,
+                "status": row.get("status", ""),
+            }
+            for row in rows
+        ]
+        return {
+            "ok": True,
+            "message": "价格事件读取完成",
+            "pair": pair or "全部币对",
+            "count": len(events),
+            "events": events,
+            "events_by_pair": {
+                p: [event for event in events if event["币对"] == p]
+                for p in sorted({str(row.get("币对")) for row in rows})
+            },
+        }
+
+    def currency_review_queue(self, application_id: int | None = None) -> dict[str, Any]:
+        """输出换算变更后的复核范围，供人工复核队列承接。"""
+        from app.services import service_for
+
+        currency = service_for("currency_conv")
+        if currency is None:
+            return {"ok": False, "message": "货币换算器服务不可用"}
+        applications = currency.list_applications().get("items", [])
+        if application_id is not None:
+            applications = [a for a in applications if int(a.get("id", 0)) == int(application_id)]
+        pending_pairs: list[dict[str, Any]] = []
+        scopes: list[str] = []
+        for app in applications:
+            scopes.append(f"{app.get('申请编号')} 复核")
+            pending_pairs.append({
+                "申请编号": app.get("申请编号"),
+                "待补材料": app.get("pending_pairs", []),
+                "已确认": app.get("confirmed_pairs", []),
+            })
+        return {
+            "ok": True,
+            "message": "复核范围已登记",
+            "applications": len(applications),
+            "review_scope": scopes,
+            "pairs": pending_pairs,
+        }
+
     def pending_for_alert(self, goods_id: str) -> dict[str, Any]:
         """把待核实记录交给告警规则消费。"""
         rows = [

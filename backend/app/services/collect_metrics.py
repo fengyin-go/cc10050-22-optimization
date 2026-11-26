@@ -128,6 +128,38 @@ class CollectMetricsService(BaseModuleService):
             }
         return {"ok": True, "message": "隔离区压力正常", "pending_quarantine": pending_quarantine}
 
+    def recompute_converted_amounts(self) -> dict[str, Any]:
+        """指标接口：消费各币对换算变更，按实际收到的口径重算换算金额。"""
+        from app.services import service_for
+
+        currency = service_for("currency_conv")
+        if currency is None:
+            return {"ok": False, "message": "货币换算器服务不可用"}
+        result = currency.conversion_metrics()
+        total = float(result.get("实际换算金额合计", 0) or 0)
+        rows = store.rows(self.MODULE)
+        mid = max((int(r.get("id", 0)) for r in rows), default=0) + 1
+        rows.append({
+            "id": mid,
+            "统计时间": datetime.now(timezone.utc).isoformat(),
+            "站点名称": "汇率替换指标",
+            "抓取量": str(result.get("changes", 0)),
+            "解析量": str(sum(len(p.get("价格事件", [])) for p in result.get("pairs", []))),
+            "产出量": str(int(total)),
+            "status": "正常",
+            "pending": False,
+            "abnormal": False,
+            "换算指标": result,
+        })
+        return {
+            "ok": True,
+            "message": "换算金额指标已按实际口径重算",
+            "total_actual_amount": total,
+            "pairs": result.get("pairs", []),
+            "review_scope": result.get("review_scope", []),
+            "metric_id": mid,
+        }
+
     def trend_report(self, site: str) -> dict[str, Any]:
         """输出站点量级趋势报告供告警规则参考。"""
         rows = [r for r in store.rows(self.MODULE) if r.get("站点名称") == site]

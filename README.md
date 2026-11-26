@@ -79,5 +79,38 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 汇率替换批次（货币换算器）
+
+运营核对不同币对的替换快照后按批次提交，接口在
+`backend/app/routers/currency_replacement.py`，领域逻辑在
+`backend/app/services/currency_conv.py`。
+
+| 接口 | 说明 |
+| --- | --- |
+| `POST /api/currency-replacement` | 提交多币对替换申请，返回逐项回执 |
+| `GET /api/currency-replacement` | 列出替换申请及续办状态 |
+| `GET /api/currency-replacement/{id}` | 读取单笔申请、逐项回执与前后口径 |
+| `POST /api/currency-replacement/{id}/resubmit` | 从原单按原币对补传材料 |
+| `POST /api/currency-replacement/{id}/consume` | 逐币对释出或等候整组释出 |
+| `GET /api/currency-replacement/{id}/changes` | 该申请的换算变更记录 |
+| `GET /api/currency-replacement/metrics/converted` | 指标接口，按币对重算实际换算金额 |
+| `POST /api/currency-replacement/metrics/recompute` | 把重算结果写回采集量指标 |
+| `GET /api/currency-replacement/history/events` | 变价流水中已关联换算依据的价格事件 |
+| `POST /api/currency-replacement/history/consume` | 变价流水消费换算变更 |
+| `GET /api/currency-replacement/history/review-queue` | 换算变更后的复核范围 |
+
+业务规则：
+
+- 每个币对只认自己币对下的可用快照；日期相同的其他币对快照不能替代。
+- 逐项回执区分「已确认 / 待补材料」，缺快照或快照无有效汇率的币对可重试，
+  旧快照与旧价继续可查，未核验数据不参与交付。
+- 同一申请内每个币对最多一条换算变更记录；重复提交已确认币对只做复查，
+  不会生成第二份记录，也不会触发第二次重算。
+- 变价流水按币对把快照关联到相关价格事件，指标接口按实际收到的口径重算，
+  留存换算前后依据与后续复核范围。
+
+自检：`cd backend && .venv/bin/python -m unittest discover -s tests -v`
+
+
 领域：数据工程
 子方向：数据采集、爬虫与RPA
